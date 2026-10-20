@@ -753,7 +753,27 @@ function renderEditor() {
         <h4 class="subhead">
           Experience ${i + 1}
         </h4>
+<div class="actions">
+  <button
+    type="button"
+    class="secondary"
+    data-movejob="${i}"
+    data-direction="-1"
+    ${i === 0 ? 'disabled' : ''}
+  >
+    ↑ Move Up
+  </button>
 
+  <button
+    type="button"
+    class="secondary"
+    data-movejob="${i}"
+    data-direction="1"
+    ${i === result.experience.length - 1 ? 'disabled' : ''}
+  >
+    ↓ Move Down
+  </button>
+</div>
         <div class="editor-grid">
           ${field(
             'Job title',
@@ -997,7 +1017,48 @@ function renderEditor() {
         renderEditor();
       };
     });
+ $('editor')
+    .querySelectorAll('[data-movejob]')
+    .forEach(button => {
+      button.onclick = () => {
+        const from = Number(
+          button.dataset.movejob
+        );
 
+        const direction = Number(
+          button.dataset.direction
+        );
+
+        const to = from + direction;
+
+        if (
+          !result ||
+          from < 0 ||
+          to < 0 ||
+          from >= result.experience.length ||
+          to >= result.experience.length
+        ) {
+          return;
+        }
+
+        const jobs = result.experience;
+
+        [jobs[from], jobs[to]] = [
+          jobs[to],
+          jobs[from]
+        ];
+
+        renderEditor();
+
+        const movedSection = $('editor')
+          .querySelectorAll('.experience-section')[to];
+
+        movedSection?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'center'
+        });
+      };
+    });
   /* -------------------------------------
      REMOVE JOB EXPERIENCE
      ------------------------------------- */
