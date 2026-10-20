@@ -2803,3 +2803,487 @@ $('coverPdf').onclick = () => {
 $('print').onclick = () => {
   window.print();
 };
+
+/* =========================================
+   V1.2 PDF TEXT RENDERING REPAIR
+   Overrides the two older PDF exporters.
+   ========================================= */
+
+function createRepairedPdf() {
+  const pdf = new jsPDF({
+    orientation: 'portrait',
+    unit: 'pt',
+    format: 'letter',
+    compress: true
+  });
+
+  pdf.setR2L(false);
+  pdf.setCharSpace(0);
+
+  return pdf;
+}
+
+function repairedPdfFont(
+  pdf,
+  size = 10,
+  bold = false,
+  color = [32, 43, 58]
+) {
+  pdf.setFont(
+    'helvetica',
+    bold ? 'bold' : 'normal'
+  );
+
+  pdf.setFontSize(size);
+  pdf.setTextColor(...color);
+  pdf.setCharSpace(0);
+}
+
+function repairedPdfWrap(pdf, value, maxWidth) {
+  const text = pdfSafe(value)
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+/g, ' ');
+
+  const output = [];
+
+  function addParagraph(paragraph) {
+    const words = paragraph.trim().split(/\s+/);
+
+    if (!paragraph.trim()) {
+      output.push('');
+      return;
+    }
+
+    let line = '';
+
+    for (const word of words) {
+      const candidate = line
+        ? line + ' ' + word
+        : word;
+
+      if (pdf.getTextWidth(candidate) <= maxWidth) {
+        line = candidate;
+        continue;
+      }
+
+      if (line) {
+        output.push(line);
+        line = '';
+      }
+
+      if (pdf.getTextWidth(word) <= maxWidth) {
+        line = word;
+        continue;
+      }
+
+      // Split exceptionally long words without
+      // deleting any characters.
+      let chunk = '';
+
+      for (const character of word) {
+        if (
+          chunk &&
+          pdf.getTextWidth(chunk + character) > maxWidth
+        ) {
+          output.push(chunk);
+          chunk = '';
+        }
+
+        chunk += character;
+      }
+
+      line = chunk;
+    }
+
+    if (line) {
+      output.push(line);
+    }
+  }
+
+  for (const paragraph of text.split('\n')) {
+    addParagraph(paragraph);
+  }
+
+  return output.length ? output : [''];
+}
+
+function repairedPdfWriter(pdf, options = {}) {
+  const pageWidth = 612;
+  const pageHeight = 792;
+
+  const left = options.left ?? 52;
+  const right = options.right ?? 52;
+  const bottom = options.bottom ?? 50;
+
+  const usableWidth = pageWidth - left - right;
+
+  let y = options.top ?? 48;
+
+  const accent =
+    templateColors[activeTemplate] ||
+    templateColors.modern;
+
+  const ink = [32, 43, 58];
+  const muted = [76, 93, 112];
+
+  function ensureSpace(height) {
+    if (y + height > pageHeight - bottom) {
+      pdf.addPage();
+      pdf.setCharSpace(0);
+      y = options.top ?? 48;
+    }
+  }
+
+  function drawLine(
+    text,
+    x,
+    baseline,
+    size,
+    bold,
+    color
+  ) {
+    repairedPdfFont(
+      pdf,
+      size,
+      bold,
+      color
+    );
+
+    // Important: draw a plain string with no
+    // justification or character-spacing options.
+    pdf.setCharSpace(0);
+    pdf.text(String(text), x, baseline);
+  }
+
+  function paragraph(
+    value,
+    {
+      size = 10,
+      bold = false,
+      color = ink,
+      leading = 15,
+      after = 10,
+      indent = 0,
+      center = false
+    } = {}
+  ) {
+    repairedPdfFont(pdf, size, bold, color);
+
+    const width = usableWidth - indent;
+
+    const lines = repairedPdfWrap(
+      pdf,
+      value,
+      width
+    );
+
+    for (const line of lines) {
+      ensureSpace(leading);
+
+      repairedPdfFont(pdf, size, bold, color);
+
+      const x = center
+        ? (pageWidth - pdf.getTextWidth(line)) / 2
+        : left + indent;
+
+      if (line) {
+        drawLine(
+          line,
+          x,
+          y,
+          size,
+          bold,
+          color
+        );
+      }
+
+      y += leading;
+    }
+
+    y += after;
+  }
+
+  function heading(title) {
+    ensureSpace(38);
+    y += 6;
+
+    drawLine(
+      pdfSafe(title),
+      left,
+      y,
+      10.3,
+      true,
+      accent
+    );
+
+    y += 5;
+
+    pdf.setDrawColor(...accent);
+    pdf.setLineWidth(0.8);
+    pdf.line(left, y, pageWidth - right, y);
+
+    y += 15;
+  }
+
+  function bullet(value, compact = false) {
+    const size = compact ? 9.1 : 9.5;
+    const leading = compact ? 12 : 13.5;
+    const indent = 17;
+
+    repairedPdfFont(pdf, size, false, ink);
+
+    const lines = repairedPdfWrap(
+      pdf,
+      value,
+      usableWidth - indent - 4
+    );
+
+    lines.forEach((line, index) => {
+      ensureSpace(leading + 2);
+
+      if (index === 0) {
+        pdf.setFillColor(...ink);
+        pdf.circle(left + 4, y - 3, 1.4, 'F');
+      }
+
+      drawLine(
+        line,
+        left + indent,
+        y,
+        size,
+        false,
+        ink
+      );
+
+      y += leading;
+    });
+
+    y += compact ? 2 : 4;
+  }
+
+  function header() {
+    if (result?.name) {
+      paragraph(result.name, {
+        size: 18,
+        bold: true,
+        color: accent,
+        leading: 22,
+        after: 1,
+        center: true
+      });
+    }
+
+    if (result?.headline) {
+      paragraph(result.headline, {
+        size: 10.5,
+        bold: true,
+        color: ink,
+        leading: 13,
+        after: 2,
+        center: true
+      });
+    }
+
+    const contact = headerContact();
+
+    if (contact) {
+      paragraph(contact, {
+        size: 8.8,
+        color: muted,
+        leading: 12,
+        after: 7,
+        center: true
+      });
+    }
+  }
+
+  function rule() {
+    ensureSpace(18);
+
+    pdf.setDrawColor(...accent);
+    pdf.setLineWidth(0.8);
+
+    pdf.line(
+      left,
+      y,
+      pageWidth - right,
+      y
+    );
+
+    y += 23;
+  }
+
+  function space(points) {
+    ensureSpace(points);
+    y += points;
+  }
+
+  return {
+    paragraph,
+    heading,
+    bullet,
+    header,
+    rule,
+    space,
+    ensureSpace,
+    ink,
+    muted
+  };
+}
+
+/* =========================================
+   REPAIRED RESUME PDF EXPORT
+   ========================================= */
+
+$('pdf').onclick = () => {
+  if (!result) return;
+
+  const pdf = createRepairedPdf();
+
+  const compact = $('length').value === 'one';
+
+  const writer = repairedPdfWriter(pdf, {
+    left: compact ? 39 : 48,
+    right: compact ? 39 : 48,
+    top: compact ? 35 : 43,
+    bottom: compact ? 36 : 49
+  });
+
+  const bodySize = compact ? 9.1 : 9.5;
+  const leading = compact ? 12.5 : 13.5;
+
+  writer.header();
+
+  writer.heading('PROFESSIONAL SUMMARY');
+
+  writer.paragraph(result.summary || '', {
+    size: bodySize,
+    leading,
+    after: 3
+  });
+
+  writer.heading('CORE SKILLS & COMPETENCIES');
+
+  writer.paragraph(
+    (result.skills || []).join(' | '),
+    {
+      size: bodySize,
+      leading,
+      after: 3
+    }
+  );
+
+  writer.heading('PROFESSIONAL EXPERIENCE');
+
+  for (const job of result.experience || []) {
+    writer.ensureSpace(55);
+
+    writer.paragraph(
+      [job.title, job.employer]
+        .filter(Boolean)
+        .join(' - '),
+      {
+        size: 10.2,
+        bold: true,
+        leading: 13,
+        after: 3
+      }
+    );
+
+    writer.paragraph(
+      [job.dates, job.location]
+        .filter(Boolean)
+        .join(' | '),
+      {
+        size: 8.7,
+        color: writer.muted,
+        leading: 11,
+        after: 6
+      }
+    );
+
+    for (const item of job.bullets || []) {
+      writer.bullet(item, compact);
+    }
+
+    writer.space(compact ? 3 : 5);
+  }
+
+  if (result.education?.length) {
+    writer.heading('EDUCATION');
+
+    for (const item of result.education) {
+      writer.paragraph(item, {
+        size: bodySize,
+        leading,
+        after: 5
+      });
+    }
+  }
+
+  if (result.additional?.length) {
+    writer.heading('ADDITIONAL INFORMATION');
+
+    for (const item of result.additional) {
+      writer.paragraph(item, {
+        size: bodySize,
+        leading,
+        after: 5
+      });
+    }
+  }
+
+  pdf.save(
+    'tailored-resume-' +
+    activeTemplate +
+    '.pdf'
+  );
+};
+
+/* =========================================
+   REPAIRED COVER LETTER PDF EXPORT
+   ========================================= */
+
+$('coverPdf').onclick = () => {
+  const raw = $('coverText').value.trim();
+
+  if (!raw) {
+    alert('Write or generate a cover letter first.');
+    return;
+  }
+
+  const pdf = createRepairedPdf();
+
+  const writer = repairedPdfWriter(pdf, {
+    left: 58,
+    right: 58,
+    top: 57,
+    bottom: 58
+  });
+
+  writer.header();
+  writer.space(5);
+  writer.rule();
+
+  const paragraphs = raw
+    .split(/\n\s*\n/)
+    .map(text =>
+      text.replace(/\s*\n\s*/g, ' ').trim()
+    )
+    .filter(Boolean);
+
+  for (const text of paragraphs) {
+    writer.paragraph(text, {
+      size: 10.5,
+      leading: 16,
+      after: 13
+    });
+  }
+
+  pdf.save(
+    'cover-letter-' +
+    activeTemplate +
+    '.pdf'
+  );
+};
+
