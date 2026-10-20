@@ -4,6 +4,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import workerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import mammoth from 'mammoth/mammoth.browser';
 import { jsPDF } from 'jspdf';
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import {
   Document,
   Packer,
@@ -3285,5 +3286,515 @@ $('coverPdf').onclick = () => {
     activeTemplate +
     '.pdf'
   );
+};
+
+/* =========================================
+   PDF-LIB EXPORT ENGINE
+   Resume Tailor Cloud v1.2
+   ========================================= */
+
+function pdfLibText(value) {
+  return String(value ?? '')
+    .normalize('NFKC')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/[\u00A0\u202F]/g, ' ')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2013\u2014]/g, '-')
+    .replace(/\u2022/g, '*')
+    .replace(/\u2026/g, '...')
+    .replace(/[^\x20-\x7E\n\r\t\u00A1-\u00FF]/g, '');
+}
+
+function pdfLibColor(values) {
+  return rgb(
+    values[0] / 255,
+    values[1] / 255,
+    values[2] / 255
+  );
+}
+
+function pdfLibWrap(text, font, size, maxWidth) {
+  const output = [];
+
+  const paragraphs = pdfLibText(text)
+    .replace(/\r\n?/g, '\n')
+    .split('\n');
+
+  const widthOf = value =>
+    font.widthOfTextAtSize(value, size);
+
+  for (const paragraph of paragraphs) {
+    if (!paragraph.trim()) {
+      output.push('');
+      continue;
+    }
+
+    const words = paragraph.trim().split(/\s+/);
+    let line = '';
+
+    for (const word of words) {
+      const candidate = line
+        ? line + ' ' + word
+        : word;
+
+      if (widthOf(candidate) <= maxWidth) {
+        line = candidate;
+        continue;
+      }
+
+      if (line) {
+        output.push(line);
+        line = '';
+      }
+
+      if (widthOf(word) <= maxWidth) {
+        line = word;
+        continue;
+      }
+
+      let chunk = '';
+
+      for (const character of word) {
+        if (
+          chunk &&
+          widthOf(chunk + character) > maxWidth
+        ) {
+          output.push(chunk);
+          chunk = '';
+        }
+
+        chunk += character;
+      }
+
+      line = chunk;
+    }
+
+    if (line) {
+      output.push(line);
+    }
+  }
+
+  return output.length ? output : [''];
+}
+
+async function createPdfLibWriter(options = {}) {
+  const document = await PDFDocument.create();
+
+  const regular = await document.embedFont(
+    StandardFonts.Helvetica
+  );
+
+  const bold = await document.embedFont(
+    StandardFonts.HelveticaBold
+  );
+
+  const pageWidth = 612;
+  const pageHeight = 792;
+
+  const left = options.left ?? 50;
+  const right = options.right ?? 50;
+  const top = options.top ?? 48;
+  const bottom = options.bottom ?? 48;
+
+  const usableWidth = pageWidth - left - right;
+
+  const accent = pdfLibColor(
+    templateColors[activeTemplate] ||
+    templateColors.modern
+  );
+
+  const ink = rgb(32 / 255, 43 / 255, 58 / 255);
+  const muted = rgb(76 / 255, 93 / 255, 112 / 255);
+
+  let page = document.addPage([
+    pageWidth,
+    pageHeight
+  ]);
+
+  let y = pageHeight - top;
+
+  function ensureSpace(height) {
+    if (y - height < bottom) {
+      page = document.addPage([
+        pageWidth,
+        pageHeight
+      ]);
+
+      y = pageHeight - top;
+    }
+  }
+
+  function paragraph(
+    value,
+    {
+      size = 10,
+      isBold = false,
+      color = ink,
+      leading = 15,
+      after = 9,
+      indent = 0,
+      center = false
+    } = {}
+  ) {
+    const font = isBold ? bold : regular;
+    const width = usableWidth - indent;
+
+    const lines = pdfLibWrap(
+      value,
+      font,
+      size,
+      width
+    );
+
+    for (const line of lines) {
+      ensureSpace(leading);
+
+      const measuredWidth =
+        font.widthOfTextAtSize(line, size);
+
+      const x = center
+        ? (pageWidth - measuredWidth) / 2
+        : left + indent;
+
+      if (line) {
+        page.drawText(line, {
+          x,
+          y,
+          size,
+          font,
+          color
+        });
+      }
+
+      y -= leading;
+    }
+
+    y -= after;
+  }
+
+  function heading(text) {
+    ensureSpace(38);
+    y -= 8;
+
+    page.drawText(pdfLibText(text), {
+      x: left,
+      y,
+      size: 10.2,
+      font: bold,
+      color: accent
+    });
+
+    y -= 6;
+
+    page.drawLine({
+      start: { x: left, y },
+      end: { x: pageWidth - right, y },
+      thickness: 0.8,
+      color: accent
+    });
+
+    y -= 15;
+  }
+
+  function bullet(value, compact = false) {
+    const size = compact ? 9.1 : 9.5;
+    const leading = compact ? 12.5 : 13.5;
+    const indent = 17;
+
+    const lines = pdfLibWrap(
+      value,
+      regular,
+      size,
+      usableWidth - indent - 3
+    );
+
+    lines.forEach((line, index) => {
+      ensureSpace(leading + 2);
+
+      if (index === 0) {
+        page.drawCircle({
+          x: left + 4,
+          y: y + 3,
+          size: 1.5,
+          color: ink
+        });
+      }
+
+      if (line) {
+        page.drawText(line, {
+          x: left + indent,
+          y,
+          size,
+          font: regular,
+          color: ink
+        });
+      }
+
+      y -= leading;
+    });
+
+    y -= compact ? 2 : 4;
+  }
+
+  function header() {
+    if (result?.name) {
+      paragraph(result.name, {
+        size: 18,
+        isBold: true,
+        color: accent,
+        leading: 22,
+        after: 1,
+        center: true
+      });
+    }
+
+    if (result?.headline) {
+      paragraph(result.headline, {
+        size: 10.5,
+        isBold: true,
+        leading: 13,
+        after: 2,
+        center: true
+      });
+    }
+
+    const contact = headerContact();
+
+    if (contact) {
+      paragraph(contact, {
+        size: 8.8,
+        color: muted,
+        leading: 12,
+        after: 7,
+        center: true
+      });
+    }
+  }
+
+  function rule() {
+    ensureSpace(20);
+
+    page.drawLine({
+      start: { x: left, y },
+      end: { x: pageWidth - right, y },
+      thickness: 0.8,
+      color: accent
+    });
+
+    y -= 24;
+  }
+
+  function space(amount) {
+    ensureSpace(amount);
+    y -= amount;
+  }
+
+  async function save(filename) {
+    const bytes = await document.save();
+
+    download(
+      new Blob([bytes], {
+        type: 'application/pdf'
+      }),
+      filename
+    );
+  }
+
+  return {
+    paragraph,
+    heading,
+    bullet,
+    header,
+    rule,
+    space,
+    ensureSpace,
+    save,
+    ink,
+    muted
+  };
+}
+
+/* =========================================
+   PDF-LIB RESUME EXPORT
+   ========================================= */
+
+$('pdf').onclick = async () => {
+  if (!result) return;
+
+  const button = $('pdf');
+  button.disabled = true;
+
+  try {
+    const compact = $('length').value === 'one';
+
+    const writer = await createPdfLibWriter({
+      left: compact ? 39 : 48,
+      right: compact ? 39 : 48,
+      top: compact ? 35 : 43,
+      bottom: compact ? 36 : 49
+    });
+
+    const size = compact ? 9.1 : 9.5;
+    const leading = compact ? 12.5 : 13.5;
+
+    writer.header();
+
+    writer.heading('PROFESSIONAL SUMMARY');
+
+    writer.paragraph(result.summary || '', {
+      size,
+      leading,
+      after: 3
+    });
+
+    writer.heading('CORE SKILLS & COMPETENCIES');
+
+    writer.paragraph(
+      (result.skills || []).join(' | '),
+      {
+        size,
+        leading,
+        after: 3
+      }
+    );
+
+    writer.heading('PROFESSIONAL EXPERIENCE');
+
+    for (const job of result.experience || []) {
+      writer.ensureSpace(55);
+
+      writer.paragraph(
+        [job.title, job.employer]
+          .filter(Boolean)
+          .join(' - '),
+        {
+          size: 10.2,
+          isBold: true,
+          leading: 13,
+          after: 3
+        }
+      );
+
+      writer.paragraph(
+        [job.dates, job.location]
+          .filter(Boolean)
+          .join(' | '),
+        {
+          size: 8.7,
+          color: writer.muted,
+          leading: 11,
+          after: 6
+        }
+      );
+
+      for (const item of job.bullets || []) {
+        writer.bullet(item, compact);
+      }
+
+      writer.space(compact ? 3 : 5);
+    }
+
+    if (result.education?.length) {
+      writer.heading('EDUCATION');
+
+      for (const item of result.education) {
+        writer.paragraph(item, {
+          size,
+          leading,
+          after: 5
+        });
+      }
+    }
+
+    if (result.additional?.length) {
+      writer.heading('ADDITIONAL INFORMATION');
+
+      for (const item of result.additional) {
+        writer.paragraph(item, {
+          size,
+          leading,
+          after: 5
+        });
+      }
+    }
+
+    await writer.save(
+      'tailored-resume-' +
+      activeTemplate +
+      '.pdf'
+    );
+
+  } catch (error) {
+    console.error(error);
+
+    alert(
+      'PDF export failed: ' + error.message
+    );
+
+  } finally {
+    button.disabled = false;
+  }
+};
+
+/* =========================================
+   PDF-LIB COVER LETTER EXPORT
+   ========================================= */
+
+$('coverPdf').onclick = async () => {
+  const raw = $('coverText').value.trim();
+
+  if (!raw) {
+    alert('Write or generate a cover letter first.');
+    return;
+  }
+
+  const button = $('coverPdf');
+  button.disabled = true;
+
+  try {
+    const writer = await createPdfLibWriter({
+      left: 58,
+      right: 58,
+      top: 57,
+      bottom: 58
+    });
+
+    writer.header();
+    writer.space(5);
+    writer.rule();
+
+    const paragraphs = raw
+      .split(/\n\s*\n/)
+      .map(text =>
+        text.replace(/\s*\n\s*/g, ' ').trim()
+      )
+      .filter(Boolean);
+
+    for (const text of paragraphs) {
+      writer.paragraph(text, {
+        size: 10.5,
+        leading: 16,
+        after: 13
+      });
+    }
+
+    await writer.save(
+      'cover-letter-' +
+      activeTemplate +
+      '.pdf'
+    );
+
+  } catch (error) {
+    console.error(error);
+
+    alert(
+      'Cover letter PDF failed: ' +
+      error.message
+    );
+
+  } finally {
+    button.disabled = false;
+  }
 };
 
