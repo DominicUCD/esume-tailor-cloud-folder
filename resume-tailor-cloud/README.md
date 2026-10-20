@@ -31,3 +31,4 @@ Local development: `npm install`, `npm run dev` for UI only. For API development
 
 ## Security
 Cloudflare Pages Functions stores the Groq key as an encrypted server-side secret. The browser never sees it. This project does not store uploaded résumés in a database. Do not upload sensitive information you are not comfortable sharing with your cloud AI provider.
+loudflare Pages deployment update.
